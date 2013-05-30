@@ -16,11 +16,10 @@
 
 package com.astuetz.viewpager.extensions;
 
-import java.util.Locale;
-
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.res.TypedArray;
+import android.database.DataSetObserver;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Paint.Style;
@@ -28,25 +27,25 @@ import android.graphics.Typeface;
 import android.os.Build;
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.support.v4.view.ViewPager;
-import android.support.v4.view.ViewPager.OnPageChangeListener;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
 import android.widget.HorizontalScrollView;
-import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import com.nineoldandroids.animation.ValueAnimator;
+
+import java.util.Locale;
+
 public class PagerSlidingTabStrip extends HorizontalScrollView {
 
-	public interface IconTabProvider {
-		public int getPageIconResId(int position);
-	}
-
+    private IndicatorAdapter mAdapter;
+    private Observer mDataSetObserver = new Observer();
 	// @formatter:off
 	private static final int[] ATTRS = new int[] {
 		android.R.attr.textSize,
@@ -57,16 +56,15 @@ public class PagerSlidingTabStrip extends HorizontalScrollView {
 	private LinearLayout.LayoutParams defaultTabLayoutParams;
 	private LinearLayout.LayoutParams expandedTabLayoutParams;
 
-	private final PageListener pageListener = new PageListener();
-	public OnPageChangeListener delegatePageListener;
+    private OnIndicatorListener mOnIndicatorClickListener;
 
 	private LinearLayout tabsContainer;
-	private ViewPager pager;
+//	private ViewPager pager;
 
 	private int tabCount;
 
 	private int currentPosition = 0;
-	private float currentPositionOffset = 0f;
+	private float currentIndicatorCenter = 0f;
 
 	private Paint rectPaint;
 	private Paint dividerPaint;
@@ -170,36 +168,36 @@ public class PagerSlidingTabStrip extends HorizontalScrollView {
 		}
 	}
 
-	public void setViewPager(ViewPager pager) {
-		this.pager = pager;
+    public void setAdapter(IndicatorAdapter adapter) {
+        mAdapter = adapter;
+        mAdapter.registerDataSetObserver(mDataSetObserver);
+        notifyDataSetChanged();
+    }
 
-		if (pager.getAdapter() == null) {
-			throw new IllegalStateException("ViewPager does not have adapter instance.");
-		}
-
-		pager.setOnPageChangeListener(pageListener);
-
-		notifyDataSetChanged();
-	}
-
-	public void setOnPageChangeListener(OnPageChangeListener listener) {
-		this.delegatePageListener = listener;
-	}
+//	public void setViewPager(ViewPager pager) {
+//		this.pager = pager;
+//
+//		if (pager.getAdapter() == null) {
+//			throw new IllegalStateException("ViewPager does not have adapter instance.");
+//		}
+//
+//		pager.setOnPageChangeListener(pageListener);
+//
+//		notifyDataSetChanged();
+//	}
+//
+//	public void setOnPageChangeListener(OnPageChangeListener listener) {
+//		this.delegatePageListener = listener;
+//	}
 
 	public void notifyDataSetChanged() {
 
 		tabsContainer.removeAllViews();
 
-		tabCount = pager.getAdapter().getCount();
+		tabCount = mAdapter.getCount();
 
 		for (int i = 0; i < tabCount; i++) {
-
-			if (pager.getAdapter() instanceof IconTabProvider) {
-				addIconTab(i, ((IconTabProvider) pager.getAdapter()).getPageIconResId(i));
-			} else {
-				addTextTab(i, pager.getAdapter().getPageTitle(i).toString());
-			}
-
+            addTextTab(i, mAdapter.getTitle(i));
 		}
 
 		updateTabStyles();
@@ -219,8 +217,8 @@ public class PagerSlidingTabStrip extends HorizontalScrollView {
 					getViewTreeObserver().removeOnGlobalLayoutListener(this);
 				}
 
-				currentPosition = pager.getCurrentItem();
-				scrollToChild(currentPosition, 0);
+				currentPosition = mAdapter.getCurrent();
+				scrollToChild(currentPosition);
 			}
 		});
 
@@ -237,31 +235,15 @@ public class PagerSlidingTabStrip extends HorizontalScrollView {
 		tab.setOnClickListener(new OnClickListener() {
 			@Override
 			public void onClick(View v) {
-				pager.setCurrentItem(position);
+                if (mOnIndicatorClickListener != null) {
+                    mOnIndicatorClickListener.itemClicked(v, position);
+                }
 			}
 		});
 
 		tabsContainer.addView(tab);
 
 	}
-
-	private void addIconTab(final int position, int resId) {
-
-		ImageButton tab = new ImageButton(getContext());
-		tab.setFocusable(true);
-		tab.setImageResource(resId);
-
-		tab.setOnClickListener(new OnClickListener() {
-			@Override
-			public void onClick(View v) {
-				pager.setCurrentItem(position);
-			}
-		});
-
-		tabsContainer.addView(tab);
-
-	}
-
 	private void updateTabStyles() {
 
 		for (int i = 0; i < tabCount; i++) {
@@ -323,21 +305,30 @@ public class PagerSlidingTabStrip extends HorizontalScrollView {
 		}
 	}
 
-	private void scrollToChild(int position, int offset) {
+	private void scrollToChild(int position) {
 
 		if (tabCount == 0) {
 			return;
 		}
 
-		int newScrollX = tabsContainer.getChildAt(position).getLeft() + offset;
-
-		if (position > 0 || offset > 0) {
-			newScrollX -= scrollOffset;
-		}
+        View child = tabsContainer.getChildAt(position);
+        int newScrollX =  child.getLeft() - (getMeasuredWidth() / 2) + (child.getMeasuredWidth() / 2);
 
 		if (newScrollX != lastScrollX) {
-			lastScrollX = newScrollX;
-			scrollTo(newScrollX, 0);
+            ValueAnimator animator = ValueAnimator.ofInt(lastScrollX, newScrollX);
+            animator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+                @Override
+                public void onAnimationUpdate(ValueAnimator animation) {
+                    currentIndicatorCenter = (Integer) animation.getAnimatedValue() + (getMeasuredWidth() / 2);
+                    scrollTo((Integer) animation.getAnimatedValue(), 0);
+                    invalidate();
+                }
+            });
+            float diff = Math.min(Math.abs(lastScrollX - newScrollX), 380);
+            animator.setDuration((long) (diff * 1.5));
+            Log.i("PagerSlidingTabStrip", "duration: " + (long) (diff * 1.5) + " diff: " + diff);
+            animator.start();
+            lastScrollX = newScrollX;
 		}
 
 	}
@@ -358,21 +349,9 @@ public class PagerSlidingTabStrip extends HorizontalScrollView {
 
 		// default: line below current tab
 		View currentTab = tabsContainer.getChildAt(currentPosition);
-		float lineLeft = currentTab.getLeft();
-		float lineRight = currentTab.getRight();
-
-		// if there is an offset, start interpolating left and right coordinates between current and next tab
-		if (currentPositionOffset > 0f && currentPosition < tabCount - 1) {
-
-			View nextTab = tabsContainer.getChildAt(currentPosition + 1);
-			final float nextTabLeft = nextTab.getLeft();
-			final float nextTabRight = nextTab.getRight();
-
-			lineLeft = (currentPositionOffset * nextTabLeft + (1f - currentPositionOffset) * lineLeft);
-			lineRight = (currentPositionOffset * nextTabRight + (1f - currentPositionOffset) * lineRight);
-		}
-
-		canvas.drawRect(lineLeft, height - indicatorHeight, lineRight, height, rectPaint);
+        float width = currentTab.getWidth();
+        canvas.drawRect(currentIndicatorCenter - (width / 2), height - indicatorHeight,
+                        currentIndicatorCenter + (width / 2), height, rectPaint);
 
 		// draw underline
 
@@ -386,43 +365,6 @@ public class PagerSlidingTabStrip extends HorizontalScrollView {
 			View tab = tabsContainer.getChildAt(i);
 			canvas.drawLine(tab.getRight(), dividerPadding, tab.getRight(), height - dividerPadding, dividerPaint);
 		}
-	}
-
-	private class PageListener implements OnPageChangeListener {
-
-		@Override
-		public void onPageScrolled(int position, float positionOffset, int positionOffsetPixels) {
-
-			currentPosition = position;
-			currentPositionOffset = positionOffset;
-
-			scrollToChild(position, (int) (positionOffset * tabsContainer.getChildAt(position).getWidth()));
-
-			invalidate();
-
-			if (delegatePageListener != null) {
-				delegatePageListener.onPageScrolled(position, positionOffset, positionOffsetPixels);
-			}
-		}
-
-		@Override
-		public void onPageScrollStateChanged(int state) {
-			if (state == ViewPager.SCROLL_STATE_IDLE) {
-				scrollToChild(pager.getCurrentItem(), 0);
-			}
-
-			if (delegatePageListener != null) {
-				delegatePageListener.onPageScrollStateChanged(state);
-			}
-		}
-
-		@Override
-		public void onPageSelected(int position) {
-			if (delegatePageListener != null) {
-				delegatePageListener.onPageSelected(position);
-			}
-		}
-
 	}
 
 	public void setIndicatorColor(int indicatorColor) {
@@ -494,15 +436,6 @@ public class PagerSlidingTabStrip extends HorizontalScrollView {
 		return dividerPadding;
 	}
 
-	public void setScrollOffset(int scrollOffsetPx) {
-		this.scrollOffset = scrollOffsetPx;
-		invalidate();
-	}
-
-	public int getScrollOffset() {
-		return scrollOffset;
-	}
-
 	public void setShouldExpand(boolean shouldExpand) {
 		this.shouldExpand = shouldExpand;
 		requestLayout();
@@ -565,6 +498,35 @@ public class PagerSlidingTabStrip extends HorizontalScrollView {
 	public int getTabPaddingLeftRight() {
 		return tabPadding;
 	}
+
+    public OnIndicatorListener getOnIndicatorClickListener() {
+        return mOnIndicatorClickListener;
+    }
+
+    public void setOnIndicatorClickListener(OnIndicatorListener onIndicatorClickListener) {
+        mOnIndicatorClickListener = onIndicatorClickListener;
+    }
+
+    private class Observer extends DataSetObserver {
+        /**
+         * This method is called when the entire data set has changed,
+         * most likely through a call to {@link android.database.Cursor#requery()} on a {@link android.database.Cursor}.
+         */
+        @Override
+        public void onChanged() {
+            PagerSlidingTabStrip.this.notifyDataSetChanged();
+        }
+
+        /**
+         * This method is called when the entire data becomes invalid,
+         * most likely through a call to {@link android.database.Cursor#deactivate()} or {@link android.database.Cursor#close()} on a
+         * {@link android.database.Cursor}.
+         */
+        @Override
+        public void onInvalidated() {
+            PagerSlidingTabStrip.this.notifyDataSetChanged();
+        }
+    }
 
 	@Override
 	public void onRestoreInstanceState(Parcelable state) {
